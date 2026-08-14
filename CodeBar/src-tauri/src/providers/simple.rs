@@ -145,6 +145,108 @@ pub async fn fetch_deepseek() -> ProviderSnapshot {
     }
 }
 
+// ------------------------------------------------------------ moonshot
+
+pub fn moonshot_base_url() -> String {
+    match std::env::var("MOONSHOT_REGION").as_deref() {
+        Ok("china") => "https://api.moonshot.cn".to_string(),
+        _ => "https://api.moonshot.ai".to_string(),
+    }
+}
+
+pub async fn verify_moonshot_key(key: &str) -> Result<(), String> {
+    if key.len() < 16 {
+        return Err("密钥长度过短".into());
+    }
+    let resp = http_client()
+        .get(format!("{}/v1/users/me/balance", moonshot_base_url()))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误:{e}"))?;
+    match resp.status().as_u16() {
+        200 => Ok(()),
+        401 => Err("401 — 服务端拒绝该密钥".into()),
+        code => Err(format!("服务端错误 HTTP {code}")),
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct MoonshotBalance {
+    #[serde(default)]
+    code: i64,
+    #[serde(default)]
+    status: Option<bool>,
+    #[serde(default)]
+    data: Option<MoonshotData>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct MoonshotData {
+    #[serde(default)]
+    available_balance: Option<serde_json::Value>,
+}
+
+/// 余额(balanceOnly,与 CodexBar Moonshot 一致:只有余额无窗口)
+pub fn parse_moonshot_balance(text: &str) -> Option<String> {
+    let resp: MoonshotBalance = serde_json::from_str(text).ok()?;
+    if resp.code != 0 || resp.status != Some(true) {
+        return None;
+    }
+    let bal = resp
+        .data?
+        .available_balance
+        .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))?;
+    Some(format!("余额 ${bal:.2}"))
+}
+
+pub async fn fetch_moonshot() -> ProviderSnapshot {
+    let now = chrono::Utc::now().timestamp();
+    let base = ProviderSnapshot {
+        id: "moonshot".into(),
+        name: "Moonshot".into(),
+        plan: Some("按量".into()),
+        status: ProviderStatus::Ok,
+        windows: vec![],
+        cost: None,
+        updated_at: now,
+    };
+    let Some(key) = SecretsStore::new().get("moonshot") else {
+        return stale_snapshot(base, "密钥丢失,请重新接入");
+    };
+    let resp = match http_client()
+        .get(format!("{}/v1/users/me/balance", moonshot_base_url()))
+        .bearer_auth(key)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return stale_snapshot(base, &format!("网络错误:{e}")),
+    };
+    match resp.status().as_u16() {
+        200 => {}
+        401 => {
+            return ProviderSnapshot { status: ProviderStatus::Error("401 — 密钥已失效".into()), ..base }
+        }
+        code => return stale_snapshot(base, &format!("服务端错误 HTTP {code}")),
+    }
+    let text = resp.text().await.unwrap_or_default();
+    match parse_moonshot_balance(&text) {
+        Some(note) => ProviderSnapshot {
+            windows: vec![UsageWindow {
+                label: "余额".into(),
+                used_percent: None,
+                reset_at: None,
+                window_seconds: None,
+                note: Some(note),
+                pace: None,
+            }],
+            ..base
+        },
+        None => stale_snapshot(base, "余额响应解析失败"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +268,18 @@ mod tests {
 
         assert!(parse_balance("{}").is_none());
         assert!(parse_balance("bad").is_none());
+    }
+
+    #[test]
+    fn moonshot_balance_parsing() {
+        let note = parse_moonshot_balance(
+            r#"{"code":0,"scode":"ok","status":true,"data":{"available_balance":12.34,"voucher_balance":0,"cash_balance":12.34}}"#,
+        );
+        assert_eq!(note.as_deref(), Some("余额 $12.34"));
+        // code 非 0 / status false → None
+        assert!(parse_moonshot_balance(r#"{"code":1,"status":false,"data":{"available_balance":1}}"#).is_none());
+        assert!(parse_moonshot_balance("{}").is_none());
+        assert!(parse_moonshot_balance("bad").is_none());
     }
 
     #[test]

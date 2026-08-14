@@ -16,7 +16,8 @@ export const api = {
   },
   refreshNow(): Promise<void> {
     if (isTauri) return invoke<void>("refresh_now");
-    return mock.refreshNow();
+    mock.refreshNow();
+    return Promise.resolve();
   },
   scanCli(id: string): Promise<ScanResult> {
     if (isTauri) return invoke<ScanResult>("scan_cli", { id });

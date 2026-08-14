@@ -17,7 +17,9 @@ const REPO_URL = "https://github.com/tienq910/codebar";
 
 export default function SettingsApp() {
   const [page, setPage] = useState<Page>(() => {
-    const hint = localStorage.getItem("codebar-settings-page");
+    // 优先 URL ?page=,其次 localStorage 提示(弹窗"添加账号"等入口),默认常规
+    const fromUrl = new URLSearchParams(window.location.search).get("page");
+    const hint = fromUrl ?? localStorage.getItem("codebar-settings-page");
     localStorage.removeItem("codebar-settings-page");
     return (["general", "providers", "display", "about"] as const).includes(hint as Page)
       ? (hint as Page)
@@ -208,6 +210,14 @@ function ProvidersPage(props: {
   const [val, setVal] = useState("");
   const [err, setErr] = useState("");
   const [scan, setScan] = useState<ScanInfo>({ path: null });
+  const [filter, setFilter] = useState("");
+
+  const visibleProviders = filter.trim()
+    ? props.providers.filter((p) => {
+        const f = filter.trim().toLowerCase();
+        return p.name.toLowerCase().includes(f) || p.id.includes(f);
+      })
+    : props.providers;
 
   const reset = () => {
     setOpenId(null);
@@ -291,8 +301,20 @@ function ProvidersPage(props: {
 
   return (
     <>
-      <div className="pg-title">Providers</div>
-      {props.providers.map((p) => {
+      <div className="pg-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        Providers
+        <span style={{ fontWeight: 400, fontSize: 11, color: "var(--dim)" }}>
+          {props.providers.length} 个
+        </span>
+        <input
+          className="pv-input"
+          style={{ margin: 0, marginLeft: "auto", width: 150, padding: "5px 10px", fontSize: 11.5 }}
+          placeholder="搜索…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
+      {visibleProviders.map((p) => {
         const isLinked = props.connected.includes(p.id);
         const isOpen = openId === p.id;
         return (
