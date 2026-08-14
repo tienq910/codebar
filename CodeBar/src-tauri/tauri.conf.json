@@ -12,9 +12,33 @@
   "app": {
     "windows": [
       {
+        "label": "popup",
         "title": "CodeBar",
-        "width": 800,
-        "height": 600
+        "url": "popup.html",
+        "width": 372,
+        "height": 420,
+        "minWidth": 372,
+        "minHeight": 200,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "visible": false,
+        "shadow": false
+      },
+      {
+        "label": "settings",
+        "title": "CodeBar 设置",
+        "url": "settings.html",
+        "width": 620,
+        "height": 470,
+        "minWidth": 620,
+        "minHeight": 470,
+        "decorations": false,
+        "resizable": false,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

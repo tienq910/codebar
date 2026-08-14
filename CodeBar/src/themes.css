@@ -1,0 +1,53 @@
+/* ================= 主题 token(Hard Hacker × Catppuccin,与原型同源) ================= */
+[data-theme="hardhacker"] {
+  --base: #282433; --panel: #2f2b3c; --panel2: #252130; --line: #3f3951;
+  --text: #eee9fc; --dim: #938aad;
+  --accent: #e965a5; --accent2: #e192ef; --ok: #b1f2a7; --warn: #ebde76; --err: #e965a5; --info: #b3f4f3;
+  --on-accent: #282433; --glow: rgba(233,101,165,.35);
+}
+[data-theme="mocha"] {
+  --base: #1e1e2e; --panel: #242437; --panel2: #181825; --line: #45475a;
+  --text: #cdd6f4; --dim: #a6adc8;
+  --accent: #cba6f7; --accent2: #89b4fa; --ok: #a6e3a1; --warn: #f9e2af; --err: #f38ba8; --info: #89dceb;
+  --on-accent: #1e1e2e; --glow: rgba(203,166,247,.3);
+}
+[data-theme="latte"] {
+  --base: #eff1f5; --panel: #ffffff; --panel2: #e6e9ef; --line: #ccd0da;
+  --text: #4c4f69; --dim: #6c6f85;
+  --accent: #8839ef; --accent2: #1e66f5; --ok: #40a02b; --warn: #df8e1d; --err: #d20f39; --info: #04a5e5;
+  --on-accent: #eff1f5; --glow: rgba(136,57,239,.18);
+}
+
+/* ================= 基础 ================= */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow: hidden; user-select: none;
+  color: var(--text);
+  transition: background-color .5s ease;
+}
+button { font-family: inherit; }
+.mono { font-family: "Cascadia Mono", ui-monospace, monospace; }
+
+/* 通用小按钮 */
+.mini-btn {
+  border: 1px solid var(--line); background: transparent; color: var(--dim);
+  border-radius: 6px; font-size: 11px; padding: 4px 9px; cursor: pointer; transition: all .15s;
+}
+.mini-btn:hover { color: var(--text); border-color: var(--dim); }
+.mini-btn:disabled { opacity: .55; cursor: default; }
+
+.spin {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: rot .7s linear infinite; flex: none;
+}
+@keyframes rot { to { transform: rotate(360deg); } }
+@keyframes scrIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* 滚动条(细节,与主题一致) */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+::-webkit-scrollbar-track { background: transparent; }
