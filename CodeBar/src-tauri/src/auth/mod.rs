@@ -126,11 +126,11 @@ mod dpapi {
     }
 
     fn take_blob(blob: CRYPT_INTEGER_BLOB) -> Vec<u8> {
-        let data = Vec::from(std::slice::from_raw_parts(blob.pbData, blob.cbData as usize));
         unsafe {
+            let data = Vec::from(std::slice::from_raw_parts(blob.pbData, blob.cbData as usize));
             let _ = LocalFree(Some(HLOCAL(blob.pbData as *mut core::ffi::c_void)));
+            data
         }
-        data
     }
 
     pub fn protect(plain: &[u8]) -> Result<Vec<u8>, windows::core::Error> {
