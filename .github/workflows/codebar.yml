@@ -1,0 +1,58 @@
+name: CodeBar CI
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: CodeBar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: CodeBar/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: CodeBar/src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build portable exe (no installer)
+        run: npm run tauri build -- --no-bundle
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item src-tauri/target/release/*.exe portable/
+          Copy-Item README.md portable/
+          Compress-Archive -Path portable/* -DestinationPath CodeBar-portable-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeBar-portable-windows-x64
+          path: CodeBar/CodeBar-portable-windows-x64.zip
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CodeBar/CodeBar-portable-windows-x64.zip

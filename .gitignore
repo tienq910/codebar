@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Node / 前端
+node_modules/
+CodeBar/dist/
+
+# Rust
+CodeBar/src-tauri/target/
+CodeBar/src-tauri/gen/
+
+# 第三方参考源码(独立 git 仓库,不入库;fixtures 需要时复制进 CodeBar/)
+demo/
+
+# 本地运行数据
+data/
+CodeBar/data/
+
+# ZCode 本地会话文件
+.zcode/
