@@ -21,7 +21,7 @@ export default function PopupApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<string>(ALL);
   const [tick, setTick] = useState(0);
-  const closingRef = useRef(false);
+  const lastHeight = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -53,19 +53,23 @@ export default function PopupApp() {
     api.refreshNow();
   }, []);
 
-  // 弹窗高度自适应内容(200–560),仅 Tauri 环境;调整时保持底边不动(贴住托盘)
+  // 弹窗高度自适应内容(200–560),仅 Tauri 环境;高度没变时不动窗口,
+  // 避免周期性 setSize/setPosition 干扰输入(虚拟机下尤其明显)
   useEffect(() => {
     if (!isTauri || !state) return;
+    const el = document.querySelector(".popup");
+    if (!el) return;
+    const h = Math.min(560, Math.max(200, el.scrollHeight));
+    if (h === lastHeight.current) return;
+    lastHeight.current = h;
     import("@tauri-apps/api/window").then(
       async ({ getCurrentWindow, LogicalSize, PhysicalPosition }) => {
-        const el = document.querySelector(".popup");
-        if (!el) return;
-        const h = Math.min(560, Math.max(200, el.scrollHeight));
         const win = getCurrentWindow();
         const scale = await win.scaleFactor();
         const pos = await win.outerPosition();
         const size = await win.outerSize();
         await win.setSize(new LogicalSize(372, h));
+        // 保持底边不动(贴住托盘)
         await win.setPosition(
           new PhysicalPosition(pos.x, pos.y + size.height - Math.round(h * scale))
         );
@@ -131,11 +135,7 @@ export default function PopupApp() {
               </button>
               <button
                 className="pp-act danger"
-                onClick={() => {
-                  if (closingRef.current) return;
-                  closingRef.current = true;
-                  api.quitApp();
-                }}
+                onClick={() => api.quitApp()}
               >
                 <span className="ic">✕</span>退出 CodeBar
               </button>
@@ -171,17 +171,13 @@ export default function PopupApp() {
               </button>
               <button
                 className="pp-act danger"
-                onClick={() => {
-                  if (closingRef.current) return;
-                  closingRef.current = true;
-                  api.quitApp();
-                }}
+                onClick={() => api.quitApp()}
               >
                 <span className="ic">✕</span>退出 CodeBar
               </button>
             </div>
           </>
-        )}
+          )}
       </div>
     </div>
   );

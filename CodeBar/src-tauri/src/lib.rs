@@ -98,6 +98,8 @@ fn toggle_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
 fn open_settings_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("settings") {
         let _ = win.unminimize();
+        // 重新居中:虚拟机/外接显示器分辨率变化后,创建时的居中坐标可能已把窗口放到屏幕外
+        let _ = win.center();
         let _ = win.show();
         let _ = win.set_focus();
     }

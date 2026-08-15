@@ -1,8 +1,11 @@
 /* ================= 托盘弹窗(移植自原型,视觉 1:1) ================= */
 
+/* 窗口本体不透明(虚拟机下透明窗口点击命中不可靠);背景与面板同色 */
+html, body { background: var(--panel); transition: background-color .5s ease; }
+
 .app-shell {
   height: 100vh; display: flex; flex-direction: column; justify-content: flex-end;
-  background: transparent;
+  background: var(--panel);
 }
 
 .popup {

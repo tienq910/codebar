@@ -20,12 +20,11 @@
         "minWidth": 372,
         "minHeight": 200,
         "decorations": false,
-        "transparent": true,
         "skipTaskbar": true,
         "alwaysOnTop": true,
         "resizable": false,
         "visible": false,
-        "shadow": false
+        "shadow": true
       },
       {
         "label": "settings",
