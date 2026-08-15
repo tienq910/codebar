@@ -22,12 +22,59 @@ const CONFIG_EVENT: &str = "config://updated";
 
 // ------------------------------------------------------------ 窗口控制
 
-fn show_popup(app: &AppHandle) {
+/// 弹窗定位纯函数:托盘图标矩形(物理像素)上方居中。
+/// 返回弹窗左上角物理坐标;(icon_x, icon_y, icon_w) = 图标矩形,popup_w 逻辑宽,
+/// popup_h_px 物理高,gap 为与图标的间隙。
+pub fn popup_pos_above_tray(
+    icon_x: f64,
+    icon_y: f64,
+    icon_w: f64,
+    popup_w: f64,
+    popup_h_px: f64,
+    scale: f64,
+    gap: f64,
+) -> (i32, i32) {
+    let w_px = popup_w * scale;
+    let icon_cx = icon_x + icon_w / 2.0;
+    let x = icon_cx - w_px / 2.0;
+    let y = icon_y - popup_h_px - gap;
+    (x.round() as i32, y.round() as i32)
+}
+
+/// 托盘图标矩形 → 物理像素 (x, y, width);Logical 值按窗口 scale 换算
+fn rect_to_physical(rect: &tauri::Rect, scale: f64) -> (f64, f64, f64) {
+    let (x, y) = match rect.position {
+        tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
+        tauri::Position::Logical(p) => (p.x * scale, p.y * scale),
+    };
+    let w = match rect.size {
+        tauri::Size::Physical(s) => s.width as f64,
+        tauri::Size::Logical(s) => s.width * scale,
+    };
+    (x, y, w)
+}
+
+/// 显示弹窗。tray_rect = Some((x, y, w)) 时精确锚定托盘图标上方;
+/// None(如第二实例唤起)时兜底走 positioner(需先 show 再定位)。
+fn show_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
     refresh::mark_popup_opened(app); // 记录交互,驱动自适应刷新
-    let _ = win.move_window(Position::TrayBottomRight);
-    let _ = win.show();
-    let _ = win.set_focus();
+    match tray_rect {
+        Some((ix, iy, iw)) => {
+            let scale = win.scale_factor().unwrap_or(1.0);
+            let h_px = win.outer_size().map(|s| s.height as f64).unwrap_or(420.0 * scale);
+            let (x, y) = popup_pos_above_tray(ix, iy, iw, 372.0, h_px, scale, 10.0);
+            // 隐藏状态下直接设坐标(不依赖显示器查询,positioner 对隐藏窗口会失败)
+            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        None => {
+            let _ = win.show();
+            let _ = win.move_window(Position::TrayBottomRight);
+            let _ = win.set_focus();
+        }
+    }
 }
 
 fn hide_popup(app: &AppHandle) {
@@ -36,7 +83,7 @@ fn hide_popup(app: &AppHandle) {
     }
 }
 
-fn toggle_popup(app: &AppHandle) {
+fn toggle_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     let visible = app
         .get_webview_window("popup")
         .map(|w| w.is_visible().unwrap_or(false))
@@ -44,7 +91,7 @@ fn toggle_popup(app: &AppHandle) {
     if visible {
         hide_popup(app);
     } else {
-        show_popup(app);
+        show_popup(app, tray_rect);
     }
 }
 
@@ -249,12 +296,40 @@ fn quit_app(app: AppHandle) {
 
 // ------------------------------------------------------------ 入口
 
+#[cfg(test)]
+mod tests {
+    use super::popup_pos_above_tray;
+
+    #[test]
+    fn popup_anchors_above_tray_icon() {
+        // 1080p、100% 缩放:图标位于 (1830, 1052),宽 24;弹窗 372×420,间隙 10
+        let (x, y) = popup_pos_above_tray(1830.0, 1052.0, 24.0, 372.0, 420.0, 1.0, 10.0);
+        assert_eq!(x, 1830 + 12 - 186); // 图标中心 - 半宽 = 1656
+        assert_eq!(y, 1052 - 420 - 10); // 622
+    }
+
+    #[test]
+    fn popup_honors_dpi_scale() {
+        // 150% 缩放:物理坐标按 scale 换算
+        let (x, y) = popup_pos_above_tray(2745.0, 1578.0, 36.0, 372.0, 630.0, 1.5, 10.0);
+        // 图标中心 2763 - 372*1.5/2 = 2763-279 = 2484
+        assert_eq!(x, 2484);
+        assert_eq!(y, 1578 - 630 - 10);
+    }
+
+    #[test]
+    fn popup_near_left_edge_clamps_nowhere_negative() {
+        // 图标极靠左:允许 x 为负(多显示器虚拟坐标),不额外 clamp
+        let (x, _) = popup_pos_above_tray(0.0, 100.0, 24.0, 372.0, 200.0, 1.0, 10.0);
+        assert_eq!(x, 12 - 186);
+    }
+}
+
 #[cfg_attr(mobile, tauri_mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
+pub fn run() {    tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 第二实例启动:唤起已有实例的弹窗
-            show_popup(app);
+            // 第二实例启动:唤起已有实例的弹窗(无托盘矩形,走兜底定位)
+            show_popup(app, None);
         }))
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(
@@ -306,10 +381,18 @@ pub fn run() {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
+                        rect,
                         ..
                     } = event
                     {
-                        toggle_popup(tray.app_handle());
+                        // 用托盘图标矩形精确锚定弹窗(positioner 对隐藏窗口定位失败,
+                        // 会导致弹窗浮在屏幕中间)
+                        let scale = tray
+                            .app_handle()
+                            .get_webview_window("popup")
+                            .and_then(|w| w.scale_factor().ok())
+                            .unwrap_or(1.0);
+                        toggle_popup(tray.app_handle(), Some(rect_to_physical(&rect, scale)));
                     }
                 })
                 .build(app)?;

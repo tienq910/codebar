@@ -53,15 +53,24 @@ export default function PopupApp() {
     api.refreshNow();
   }, []);
 
-  // 弹窗高度自适应内容(200–560),仅 Tauri 环境
+  // 弹窗高度自适应内容(200–560),仅 Tauri 环境;调整时保持底边不动(贴住托盘)
   useEffect(() => {
     if (!isTauri || !state) return;
-    import("@tauri-apps/api/window").then(({ getCurrentWindow, LogicalSize }) => {
-      const el = document.querySelector(".popup");
-      if (!el) return;
-      const h = Math.min(560, Math.max(200, el.scrollHeight));
-      getCurrentWindow().setSize(new LogicalSize(372, h));
-    });
+    import("@tauri-apps/api/window").then(
+      async ({ getCurrentWindow, LogicalSize, PhysicalPosition }) => {
+        const el = document.querySelector(".popup");
+        if (!el) return;
+        const h = Math.min(560, Math.max(200, el.scrollHeight));
+        const win = getCurrentWindow();
+        const scale = await win.scaleFactor();
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        await win.setSize(new LogicalSize(372, h));
+        await win.setPosition(
+          new PhysicalPosition(pos.x, pos.y + size.height - Math.round(h * scale))
+        );
+      }
+    );
   }, [state, tab, tick]);
 
   if (!state) {
