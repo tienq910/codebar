@@ -98,6 +98,7 @@ async fn refresh_token_if_needed(creds: &mut CodexCredentials) -> Result<(), Str
     if !creds.needs_refresh(now) || creds.refresh_token.is_empty() {
         return Ok(());
     }
+    crate::logger::log(crate::logger::Level::Info, "providers", "codex: refreshing oauth token");
     let client = http_client();
     let resp = client
         .post(TOKEN_URL)
@@ -135,6 +136,7 @@ async fn refresh_token_if_needed(creds: &mut CodexCredentials) -> Result<(), Str
         creds.refresh_token = tokens.refresh_token.clone();
     }
     creds.last_refresh = Some(Utc::now());
+    crate::logger::log(crate::logger::Level::Info, "providers", "codex: token refreshed + written back");
     // 回写 auth.json(保留未知字段)
     merge_json_file(
         &auth_json_path(),

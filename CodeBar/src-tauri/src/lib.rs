@@ -3,6 +3,7 @@
 mod adaptive;
 mod auth;
 mod config;
+mod logger;
 mod models;
 mod providers;
 mod refresh;
@@ -89,8 +90,17 @@ fn toggle_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
         .map(|w| w.is_visible().unwrap_or(false))
         .unwrap_or(false);
     if visible {
+        logger::log(logger::Level::Info, "tray", "tray click → hide popup");
         hide_popup(app);
     } else {
+        match tray_rect {
+            Some((x, y, w)) => logger::log(
+                logger::Level::Info,
+                "tray",
+                &format!("tray click → show popup (icon rect {x:.0},{y:.0} w{w:.0})"),
+            ),
+            None => logger::log(logger::Level::Info, "tray", "tray click → show popup (no rect, fallback)"),
+        }
         show_popup(app, tray_rect);
     }
 }
@@ -184,6 +194,11 @@ async fn connect_provider(
     match desc.auth {
         providers::AuthKind::Auto => {
             let scan = providers::scan_cli(&id);
+            logger::log(
+                logger::Level::Info,
+                "providers",
+                &format!("connect {id} (auto): found={} valid={} path={}", scan.found, scan.valid, scan.path.unwrap_or_default()),
+            );
             if scan.found && scan.valid {
                 add_connected(&id);
             } else if scan.found {
@@ -197,7 +212,13 @@ async fn connect_provider(
             if cred.is_empty() {
                 return Err("请输入凭据".into());
             }
-            providers::verify_connect(&id, &cred).await?;
+            match providers::verify_connect(&id, &cred).await {
+                Ok(()) => logger::log(logger::Level::Info, "providers", &format!("connect {id} ({:?}): verify ok", desc.auth)),
+                Err(e) => {
+                    logger::log(logger::Level::Warn, "providers", &format!("connect {id} ({:?}): verify failed: {e}", desc.auth));
+                    return Err(e);
+                }
+            }
             SecretsStore::new().set(&id, &cred);
             add_connected(&id);
         }
@@ -212,6 +233,7 @@ async fn connect_provider(
 
 #[tauri::command]
 fn disconnect_provider(app: AppHandle, id: String) {
+    logger::log(logger::Level::Info, "providers", &format!("disconnect {id}"));
     remove_connected(&id);
     SecretsStore::new().remove(&id);
     // 快照里去掉该 provider 并广播
@@ -239,6 +261,7 @@ fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
     if !config::THEMES.contains(&theme.as_str()) {
         return Err("未知主题".into());
     }
+    logger::log(logger::Level::Info, "config", &format!("theme → {theme}"));
     let mut cfg = config::load_config();
     cfg.theme = theme;
     config::save_config(&cfg).map_err(|e| e.to_string())?;
@@ -253,6 +276,7 @@ fn set_refresh_interval(app: AppHandle, interval: String) -> Result<(), String> 
     if !config::INTERVALS.contains(&interval.as_str()) {
         return Err("未知刷新间隔".into());
     }
+    logger::log(logger::Level::Info, "config", &format!("refresh_interval → {interval}"));
     let mut cfg = config::load_config();
     cfg.refresh_interval = interval;
     config::save_config(&cfg).map_err(|e| e.to_string())?;
@@ -263,6 +287,7 @@ fn set_refresh_interval(app: AppHandle, interval: String) -> Result<(), String> 
 /// 开机自启:唯一允许写注册表的开关(默认关)
 #[tauri::command]
 fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    logger::log(logger::Level::Info, "config", &format!("autostart → {enabled}"));
     let mut cfg = config::load_config();
     cfg.autostart = enabled;
     config::save_config(&cfg).map_err(|e| e.to_string())?;
@@ -276,15 +301,22 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 诊断日志:追加到 exe 同级 data/ui-debug.log(排查用户环境问题用)
+/// 前端日志通道(写入 data/codebar.log 的 [ui] 分类)
 #[tauri::command]
 fn debug_log(message: String) {
-    use std::io::Write;
+    logger::log(logger::Level::Info, "ui", &message);
+}
+
+/// 在资源管理器中打开数据目录(含日志文件)
+#[tauri::command]
+fn open_log_dir(app: AppHandle) -> Result<(), String> {
     let dir = config::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("ui-debug.log")) {
-        let _ = writeln!(f, "[{}] {message}", chrono::Local::now().format("%m-%d %H:%M:%S"));
-    }
+    logger::log(logger::Level::Info, "app", "open log dir requested");
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .reveal_item_in_dir(&dir)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -293,7 +325,7 @@ fn open_settings(app: AppHandle) {
 }
 
 fn open_settings_impl(app: &AppHandle) {
-    debug_log("open_settings".into());
+    logger::log(logger::Level::Info, "window", "open_settings");
     match app.get_webview_window("settings") {
         Some(win) => {
             let _ = win.unminimize();
@@ -301,7 +333,7 @@ fn open_settings_impl(app: &AppHandle) {
             let _ = win.center();
             let _ = win.show();
             let _ = win.set_focus();
-            debug_log("settings window shown".into());
+            logger::log(logger::Level::Info, "window", "settings window shown");
         }
         None => {
             // 极端兜底:窗口丢失时按配置重建
@@ -318,13 +350,13 @@ fn open_settings_impl(app: &AppHandle) {
                         Ok(win) => {
                             let _ = win.show();
                             let _ = win.set_focus();
-                            debug_log("settings window recreated+shown".into());
+                            logger::log(logger::Level::Warn, "window", "settings window recreated+shown");
                         }
-                        Err(e) => debug_log(format!("settings recreate build failed: {e}")),
+                        Err(e) => logger::log(logger::Level::Error, "window", &format!("settings recreate build failed: {e}")),
                     },
-                    Err(e) => debug_log(format!("settings recreate from_config failed: {e}")),
+                    Err(e) => logger::log(logger::Level::Error, "window", &format!("settings recreate from_config failed: {e}")),
                 },
-                None => debug_log("settings window config missing".into()),
+                None => logger::log(logger::Level::Error, "window", "settings window config missing"),
             }
         }
     }
@@ -332,7 +364,7 @@ fn open_settings_impl(app: &AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    debug_log("cmd quit_app".into());
+    logger::log(logger::Level::Info, "app", "quit_app");
     app.exit(0);
     // 兜底:退出流程若被清理卡住,500ms 后强制退出
     std::thread::spawn(|| {
@@ -376,6 +408,7 @@ mod tests {
 pub fn run() {    tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 第二实例启动:唤起已有实例的弹窗(无托盘矩形,走兜底定位)
+            logger::log(logger::Level::Info, "app", "second instance launched → show popup");
             show_popup(app, None);
         }))
         .plugin(tauri_plugin_positioner::init())
@@ -397,11 +430,23 @@ pub fn run() {    tauri::Builder::default()
             set_autostart,
             open_settings,
             quit_app,
-            debug_log
+            debug_log,
+            open_log_dir
         ])
         .setup(|app| {
-            debug_log("app setup".into());
             let cfg = config::load_config();
+            logger::log(
+                logger::Level::Info,
+                "app",
+                &format!(
+                    "CodeBar v{} 启动 · theme={} interval={} autostart={} connected=[{}]",
+                    app.package_info().version,
+                    cfg.theme,
+                    cfg.refresh_interval,
+                    cfg.autostart,
+                    cfg.connected.join(",")
+                ),
+            );
 
             // 托盘:三段用量条图标(初始按已接入状态),右键菜单,左键开合弹窗
             let refresh_item = MenuItem::with_id(app, "refresh", "刷新", true, None::<&str>)?;
@@ -417,13 +462,24 @@ pub fn run() {    tauri::Builder::default()
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "refresh" => {
+                        logger::log(logger::Level::Info, "tray", "menu: refresh");
                         let handle = app.clone();
                         tauri::async_runtime::spawn(async move {
                             refresh::refresh_all(&handle).await;
                         });
                     }
-                    "settings" => open_settings_impl(app),
-                    "quit" => app.exit(0),
+                    "settings" => {
+                        logger::log(logger::Level::Info, "tray", "menu: settings");
+                        open_settings_impl(app);
+                    }
+                    "quit" => {
+                        logger::log(logger::Level::Info, "tray", "menu: quit");
+                        app.exit(0);
+                        std::thread::spawn(|| {
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            std::process::exit(0);
+                        });
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

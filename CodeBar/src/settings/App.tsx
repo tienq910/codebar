@@ -101,6 +101,7 @@ export default function SettingsApp() {
               onRefresh={triggerRefresh}
               flash={flash}
               dataDir={dataDir}
+              onOpenLogDir={() => api.openLogDir()}
             />
           )}
           {page === "providers" && (
@@ -123,6 +124,7 @@ function GeneralPage(props: {
   onRefresh: () => void;
   flash: string;
   dataDir: string;
+  onOpenLogDir: () => void;
 }) {
   return (
     <>
@@ -190,6 +192,23 @@ function GeneralPage(props: {
         <div className="pg-row">
           <div className="pg-desc mono" style={{ userSelect: "text" }}>
             {props.dataDir || "…"}
+          </div>
+        </div>
+      </div>
+      <div className="pg-card">
+        <div className="pg-row">
+          <div>
+            <div className="pg-label">诊断日志</div>
+            <div className="pg-desc">
+              记录启动/刷新/接入/弹窗操作与错误,位于 data/codebar.log
+              <br />
+              超过 512KB 自动轮转为 codebar.log.old;绝不记录密钥内容
+            </div>
+          </div>
+          <div className="right">
+            <button className="pv-btn" onClick={props.onOpenLogDir}>
+              打开日志目录
+            </button>
           </div>
         </div>
       </div>

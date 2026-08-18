@@ -57,13 +57,19 @@ export const api = {
     mock.quitApp();
     return Promise.resolve();
   },
-  /** 诊断日志 → data/ui-debug.log(浏览器预览打印到 console) */
+  /** 诊断日志 → data/codebar.log(浏览器预览打印到 console) */
   debugLog(message: string): void {
     if (isTauri) {
       invoke<void>("debug_log", { message }).catch(() => {});
     } else {
       console.info("[codebar]", message);
     }
+  },
+  /** 在资源管理器中打开数据目录(含日志文件) */
+  openLogDir(): Promise<void> {
+    if (isTauri) return invoke<void>("open_log_dir");
+    console.info("[codebar] openLogDir(mock)");
+    return Promise.resolve();
   },
   /** 订阅刷新结果事件;返回取消函数 */
   onUsageUpdated(cb: (payload: UsageUpdatedPayload) => void): () => void {

@@ -45,20 +45,45 @@ pub fn mark_popup_opened(app: &AppHandle) {
 pub async fn refresh_all(app: &AppHandle) {
     let state = app.state::<AppState>();
     if state.refreshing.swap(true, Ordering::SeqCst) {
+        crate::logger::log(crate::logger::Level::Info, "refresh", "skip: already refreshing");
         return; // 已有一批在跑
     }
     emit_state(app, true);
 
+    let started = std::time::Instant::now();
     let cfg = config::load_config();
     let order: Vec<String> = providers::registry()
         .into_iter()
         .map(|d| d.id)
         .filter(|id| cfg.connected.contains(id))
         .collect();
+    crate::logger::log(
+        crate::logger::Level::Info,
+        "refresh",
+        &format!("start ({}): [{}]", cfg.refresh_interval, order.join(",")),
+    );
 
     let mut snapshots = Vec::new();
     for id in &order {
+        let started_one = std::time::Instant::now();
         let snap = providers::fetch_snapshot(id).await;
+        match &snap.status {
+            ProviderStatus::Ok => crate::logger::log(
+                crate::logger::Level::Info,
+                "providers",
+                &format!("{id}: ok ({} windows, {}ms)", snap.windows.len(), started_one.elapsed().as_millis()),
+            ),
+            ProviderStatus::Stale(msg) => crate::logger::log(
+                crate::logger::Level::Warn,
+                "providers",
+                &format!("{id}: stale — {msg}"),
+            ),
+            ProviderStatus::Error(msg) => crate::logger::log(
+                crate::logger::Level::Error,
+                "providers",
+                &format!("{id}: error — {msg}"),
+            ),
+        }
         snapshots.push(snap);
     }
     let now = chrono::Utc::now().timestamp();
@@ -70,6 +95,11 @@ pub async fn refresh_all(app: &AppHandle) {
 
     state.refreshing.store(false, Ordering::SeqCst);
     emit_state(app, false);
+    crate::logger::log(
+        crate::logger::Level::Info,
+        "refresh",
+        &format!("done in {}ms", started.elapsed().as_millis()),
+    );
 }
 
 fn emit_state(app: &AppHandle, refreshing: bool) {
@@ -97,6 +127,11 @@ fn check_alerts(app: &AppHandle, snapshots: &[ProviderSnapshot]) {
             let key = format!("{}:{}", snap.id, win.label);
             let prev = mem.get(&key).copied().unwrap_or(0.0);
             if used >= ALERT_THRESHOLD && prev < ALERT_THRESHOLD {
+                crate::logger::log(
+                    crate::logger::Level::Warn,
+                    "alert",
+                    &format!("{} {} 已用 {}%,发送告警", snap.name, win.label, used.round() as i64),
+                );
                 let _ = app
                     .notification()
                     .builder()
@@ -143,6 +178,10 @@ fn next_delay(app: &AppHandle, cfg: &Config) -> u64 {
         last_popup_open: *state.last_popup_open.lock().unwrap(),
     };
     let decision = adaptive::decide(&input);
-    println!("[codebar] adaptive refresh: reason={} delay={}s", decision.reason, decision.delay_secs);
+    crate::logger::log(
+        crate::logger::Level::Info,
+        "refresh",
+        &format!("adaptive: reason={} delay={}s", decision.reason, decision.delay_secs),
+    );
     decision.delay_secs
 }

@@ -23,3 +23,16 @@ cargo test --manifest-path src-tauri/Cargo.toml   # 纯逻辑单测
 ```
 
 Windows 编译与打包走 GitHub Actions（`.github/workflows/codebar.yml`）,产物见 Actions run 的 artifact 或 Releases。
+
+## 排查问题
+
+操作日志位于 **exe 同级 `data/codebar.log`**（设置 → 常规 → 「打开日志目录」可直达）,记录：
+
+- 启动信息（版本/主题/刷新间隔/已接入列表）与第二实例唤起
+- 托盘点击/菜单操作、弹窗显隐（含托盘图标坐标）
+- 每轮刷新：开始/每个 provider 结果（ok 窗口数/软降级原因/错误）/耗时,自适应刷新决策
+- provider 接入（扫描结果/校验成败）、断开、主题与配置变更
+- 前端页面挂载、按钮操作、JS 异常与未处理的 Promise rejection
+
+日志超过 512KB 自动轮转为 `codebar.log.old`;**绝不记录密钥/Cookie/token 内容**,可放心分享排查。
+遇到问题时把该文件发给开发者即可快速定位。

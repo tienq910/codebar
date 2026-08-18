@@ -104,6 +104,7 @@ async fn refresh_token_if_needed(creds: &mut ClaudeCredentials) -> Result<(), St
     if !needs || creds.refresh_token.is_empty() {
         return Ok(());
     }
+    crate::logger::log(crate::logger::Level::Info, "providers", "claude: refreshing oauth token");
     let resp = http_client()
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
