@@ -12,9 +12,24 @@ function statusDotClass(s: ProviderSnapshot) {
   return "";
 }
 
-function openSettingsAt(page: "general" | "providers") {
-  localStorage.setItem("codebar-settings-page", page);
-  api.openSettings();
+async function openSettingsAt(page: "general" | "providers") {
+  api.debugLog(`ui:openSettings(${page})`);
+  try {
+    localStorage.setItem("codebar-settings-page", page);
+    await api.openSettings();
+    api.debugLog(`ui:openSettings(${page}) ok`);
+  } catch (e) {
+    api.debugLog(`ui:openSettings(${page}) FAILED: ${e}`);
+  }
+}
+
+async function quitApp() {
+  api.debugLog("ui:quitApp");
+  try {
+    await api.quitApp();
+  } catch (e) {
+    api.debugLog(`ui:quitApp FAILED: ${e}`);
+  }
 }
 
 export default function PopupApp() {
@@ -22,6 +37,18 @@ export default function PopupApp() {
   const [tab, setTab] = useState<string>(ALL);
   const [tick, setTick] = useState(0);
   const lastHeight = useRef(0);
+  // 底部动作去重(pointerdown 与 click 双通道都会触发)
+  const actGuard = useRef<Record<string, number>>({});
+  const footerAct = (key: string, fn: () => void) => () => {
+    const now = Date.now();
+    if (now - (actGuard.current[key] ?? 0) < 400) return;
+    actGuard.current[key] = now;
+    fn();
+  };
+  const bindAct = (key: string, fn: () => void) => {
+    const h = footerAct(key, fn);
+    return { onClick: h, onPointerDown: h };
+  };
 
   useEffect(() => {
     let alive = true;
@@ -53,28 +80,34 @@ export default function PopupApp() {
     api.refreshNow();
   }, []);
 
-  // 弹窗高度自适应内容(200–560),仅 Tauri 环境;高度没变时不动窗口,
-  // 避免周期性 setSize/setPosition 干扰输入(虚拟机下尤其明显)
+  // 弹窗高度自适应内容(200–560 + 12px 底边留白,让 footer 离开窗口边缘),
+  // 仅 Tauri 环境;高度没变时不动窗口,避免周期性 setSize/setPosition 干扰输入。
+  // 窗口隐藏时布局可能未完成,visible 时重测一次。
   useEffect(() => {
-    if (!isTauri || !state) return;
-    const el = document.querySelector(".popup");
-    if (!el) return;
-    const h = Math.min(560, Math.max(200, el.scrollHeight));
-    if (h === lastHeight.current) return;
-    lastHeight.current = h;
-    import("@tauri-apps/api/window").then(
-      async ({ getCurrentWindow, LogicalSize, PhysicalPosition }) => {
-        const win = getCurrentWindow();
-        const scale = await win.scaleFactor();
-        const pos = await win.outerPosition();
-        const size = await win.outerSize();
-        await win.setSize(new LogicalSize(372, h));
-        // 保持底边不动(贴住托盘)
-        await win.setPosition(
-          new PhysicalPosition(pos.x, pos.y + size.height - Math.round(h * scale))
-        );
-      }
-    );
+    if (!isTauri) return;
+    const measure = () => {
+      const el = document.querySelector(".popup");
+      if (!el || !state) return;
+      const h = Math.min(572, Math.max(212, el.scrollHeight + 12));
+      if (h === lastHeight.current) return;
+      lastHeight.current = h;
+      import("@tauri-apps/api/window").then(
+        async ({ getCurrentWindow, LogicalSize, PhysicalPosition }) => {
+          const win = getCurrentWindow();
+          const scale = await win.scaleFactor();
+          const pos = await win.outerPosition();
+          const size = await win.outerSize();
+          await win.setSize(new LogicalSize(372, h));
+          // 保持底边不动(贴住托盘)
+          await win.setPosition(
+            new PhysicalPosition(pos.x, pos.y + size.height - Math.round(h * scale))
+          );
+        }
+      );
+    };
+    measure();
+    document.addEventListener("visibilitychange", measure);
+    return () => document.removeEventListener("visibilitychange", measure);
   }, [state, tab, tick]);
 
   if (!state) {
@@ -127,16 +160,13 @@ export default function PopupApp() {
             </div>
             <div className="setup-banner">
               <span>先接入一个工具,20 秒搞定。</span>
-              <button onClick={() => openSettingsAt("providers")}>去设置 →</button>
+              <button {...bindAct("banner", () => openSettingsAt("providers"))}>去设置 →</button>
             </div>
             <div className="pp-foot">
-              <button className="pp-act" onClick={() => openSettingsAt("general")}>
+              <button className="pp-act" {...bindAct("settings", () => openSettingsAt("general"))}>
                 <span className="ic">⚙</span>设置…
               </button>
-              <button
-                className="pp-act danger"
-                onClick={() => api.quitApp()}
-              >
+              <button className="pp-act danger" {...bindAct("quit", () => quitApp())}>
                 <span className="ic">✕</span>退出 CodeBar
               </button>
             </div>
@@ -163,16 +193,13 @@ export default function PopupApp() {
               )}
             </div>
             <div className="pp-foot">
-              <button className="pp-act" onClick={() => openSettingsAt("providers")}>
+              <button className="pp-act" {...bindAct("add", () => openSettingsAt("providers"))}>
                 <span className="ic">＋</span>添加账号 / 工具…
               </button>
-              <button className="pp-act" onClick={() => openSettingsAt("general")}>
+              <button className="pp-act" {...bindAct("settings", () => openSettingsAt("general"))}>
                 <span className="ic">⚙</span>设置…
               </button>
-              <button
-                className="pp-act danger"
-                onClick={() => api.quitApp()}
-              >
+              <button className="pp-act danger" {...bindAct("quit", () => quitApp())}>
                 <span className="ic">✕</span>退出 CodeBar
               </button>
             </div>

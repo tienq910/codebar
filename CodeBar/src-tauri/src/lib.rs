@@ -95,16 +95,6 @@ fn toggle_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     }
 }
 
-fn open_settings_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.unminimize();
-        // 重新居中:虚拟机/外接显示器分辨率变化后,创建时的居中坐标可能已把窗口放到屏幕外
-        let _ = win.center();
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
-}
-
 fn emit_config_updated(app: &AppHandle) {
     let cfg = config::load_config();
     let _ = app.emit(
@@ -286,14 +276,69 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 诊断日志:追加到 exe 同级 data/ui-debug.log(排查用户环境问题用)
+#[tauri::command]
+fn debug_log(message: String) {
+    use std::io::Write;
+    let dir = config::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("ui-debug.log")) {
+        let _ = writeln!(f, "[{}] {message}", chrono::Local::now().format("%m-%d %H:%M:%S"));
+    }
+}
+
 #[tauri::command]
 fn open_settings(app: AppHandle) {
-    open_settings_window(&app);
+    open_settings_impl(&app);
+}
+
+fn open_settings_impl(app: &AppHandle) {
+    debug_log("open_settings".into());
+    match app.get_webview_window("settings") {
+        Some(win) => {
+            let _ = win.unminimize();
+            // 重新居中:虚拟机/外接显示器分辨率变化后,创建时的居中坐标可能已把窗口放到屏幕外
+            let _ = win.center();
+            let _ = win.show();
+            let _ = win.set_focus();
+            debug_log("settings window shown".into());
+        }
+        None => {
+            // 极端兜底:窗口丢失时按配置重建
+            let cfg = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "settings")
+                .cloned();
+            match cfg {
+                Some(cfg) => match tauri::WebviewWindowBuilder::from_config(app, &cfg) {
+                    Ok(builder) => match builder.build() {
+                        Ok(win) => {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                            debug_log("settings window recreated+shown".into());
+                        }
+                        Err(e) => debug_log(format!("settings recreate build failed: {e}")),
+                    },
+                    Err(e) => debug_log(format!("settings recreate from_config failed: {e}")),
+                },
+                None => debug_log("settings window config missing".into()),
+            }
+        }
+    }
 }
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    debug_log("cmd quit_app".into());
     app.exit(0);
+    // 兜底:退出流程若被清理卡住,500ms 后强制退出
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::process::exit(0);
+    });
 }
 
 // ------------------------------------------------------------ 入口
@@ -351,9 +396,11 @@ pub fn run() {    tauri::Builder::default()
             set_refresh_interval,
             set_autostart,
             open_settings,
-            quit_app
+            quit_app,
+            debug_log
         ])
         .setup(|app| {
+            debug_log("app setup".into());
             let cfg = config::load_config();
 
             // 托盘:三段用量条图标(初始按已接入状态),右键菜单,左键开合弹窗
@@ -375,7 +422,7 @@ pub fn run() {    tauri::Builder::default()
                             refresh::refresh_all(&handle).await;
                         });
                     }
-                    "settings" => open_settings_window(app),
+                    "settings" => open_settings_impl(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

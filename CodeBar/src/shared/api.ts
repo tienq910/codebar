@@ -57,6 +57,14 @@ export const api = {
     mock.quitApp();
     return Promise.resolve();
   },
+  /** 诊断日志 → data/ui-debug.log(浏览器预览打印到 console) */
+  debugLog(message: string): void {
+    if (isTauri) {
+      invoke<void>("debug_log", { message }).catch(() => {});
+    } else {
+      console.info("[codebar]", message);
+    }
+  },
   /** 订阅刷新结果事件;返回取消函数 */
   onUsageUpdated(cb: (payload: UsageUpdatedPayload) => void): () => void {
     if (!isTauri) return mock.onUsage(cb as (p: unknown) => void);

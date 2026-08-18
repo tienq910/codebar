@@ -6,6 +6,8 @@ html, body { background: var(--panel); transition: background-color .5s ease; }
 .app-shell {
   height: 100vh; display: flex; flex-direction: column; justify-content: flex-end;
   background: var(--panel);
+  /* 底部 12px 留白:让 footer 离开无边框窗口的边缘命中区 */
+  padding-bottom: 12px;
 }
 
 .popup {
