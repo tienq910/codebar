@@ -42,8 +42,8 @@ html, body { background: var(--panel); transition: background-color .5s ease; }
 .pp-tab .tdot.stale { background: var(--dim); }
 .pp-tab .tdot.error { background: var(--err); }
 
-/* 用量区 */
-.pp-body { padding: 6px 16px 10px; overflow-y: auto; }
+/* 用量区(flex:1+min-height:0:固定高度窗口内超出时中部内滚,footer 永不被裁) */
+.pp-body { padding: 6px 16px 10px; overflow-y: auto; flex: 1; min-height: 0; }
 .u-block { padding: 12px 0 10px; border-bottom: 1px solid var(--line); }
 .u-block:last-child { border-bottom: none; }
 .u-title { display: flex; align-items: baseline; font-size: 13px; color: var(--text); font-weight: 600; }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, isTauri } from "../shared/api";
+import { api } from "../shared/api";
 import { fmtCountdown, fmtRelative, fmtUsd, worstWindow } from "../shared/format";
 import { applyTheme } from "../shared/theme";
 import type { AppState, ProviderSnapshot, UsageWindow } from "../shared/types";
@@ -36,7 +36,6 @@ export default function PopupApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<string>(ALL);
   const [tick, setTick] = useState(0);
-  const lastHeight = useRef(0);
   // 底部动作去重(pointerdown 与 click 双通道都会触发)
   const actGuard = useRef<Record<string, number>>({});
   const footerAct = (key: string, fn: () => void) => () => {
@@ -80,35 +79,9 @@ export default function PopupApp() {
     api.refreshNow();
   }, []);
 
-  // 弹窗高度自适应内容(200–560 + 12px 底边留白,让 footer 离开窗口边缘),
-  // 仅 Tauri 环境;高度没变时不动窗口,避免周期性 setSize/setPosition 干扰输入。
-  // 窗口隐藏时布局可能未完成,visible 时重测一次。
-  useEffect(() => {
-    if (!isTauri) return;
-    const measure = () => {
-      const el = document.querySelector(".popup");
-      if (!el || !state) return;
-      const h = Math.min(572, Math.max(212, el.scrollHeight + 12));
-      if (h === lastHeight.current) return;
-      lastHeight.current = h;
-      import("@tauri-apps/api/window").then(
-        async ({ getCurrentWindow, LogicalSize, PhysicalPosition }) => {
-          const win = getCurrentWindow();
-          const scale = await win.scaleFactor();
-          const pos = await win.outerPosition();
-          const size = await win.outerSize();
-          await win.setSize(new LogicalSize(372, h));
-          // 保持底边不动(贴住托盘)
-          await win.setPosition(
-            new PhysicalPosition(pos.x, pos.y + size.height - Math.round(h * scale))
-          );
-        }
-      );
-    };
-    measure();
-    document.addEventListener("visibilitychange", measure);
-    return () => document.removeEventListener("visibilitychange", measure);
-  }, [state, tab, tick]);
+  // 弹窗高度固定(空态 452 / 主界面 572,由 Rust 在 show 时设定),
+  // 禁止在隐藏窗口上 setSize/setPosition:WebView2 命中区会与可视内容错位,
+  // 导致底部按钮"看得见、点不动"(Win10 实体机实测)。内容超出由 .pp-body 内滚。
 
   if (!state) {
     return (

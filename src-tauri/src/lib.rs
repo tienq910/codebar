@@ -42,6 +42,22 @@ pub fn popup_pos_above_tray(
     (x.round() as i32, y.round() as i32)
 }
 
+/// 弹窗固定高度(逻辑像素,含 12px 底部留白):空态 / 主界面。
+/// 禁止在隐藏窗口上 setSize/setPosition(WebView2 命中区会与可视内容错位,
+/// 导致底部按钮"看得见、点不动"),因此高度只在 show_popup 时按已接入状态设定。
+const POPUP_H_EMPTY: f64 = 452.0;
+const POPUP_H_MAIN: f64 = 572.0;
+
+/// 失焦自动隐藏的宽限期:窗口刚 show 时焦点交接可能产生杂散 blur,立即隐藏会让用户点空
+const BLUR_HIDE_GRACE_MS: u128 = 500;
+
+static POPUP_SHOWN_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// 失焦后是否允许隐藏弹窗(纯函数,便于单测):宽限期内的 blur 忽略
+pub fn blur_hide_allowed(elapsed_ms: u128, grace_ms: u128) -> bool {
+    elapsed_ms >= grace_ms
+}
+
 /// 托盘图标矩形 → 物理像素 (x, y, width);Logical 值按窗口 scale 换算
 fn rect_to_physical(rect: &tauri::Rect, scale: f64) -> (f64, f64, f64) {
     let (x, y) = match rect.position {
@@ -57,25 +73,41 @@ fn rect_to_physical(rect: &tauri::Rect, scale: f64) -> (f64, f64, f64) {
 
 /// 显示弹窗。tray_rect = Some((x, y, w)) 时精确锚定托盘图标上方;
 /// None(如第二实例唤起)时兜底走 positioner(需先 show 再定位)。
+/// 高度按已接入状态取固定值(空态/主界面),只在此时改窗口尺寸。
 fn show_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
     refresh::mark_popup_opened(app); // 记录交互,驱动自适应刷新
+    *POPUP_SHOWN_AT.lock().unwrap() = Some(std::time::Instant::now());
+    let logical_h = if config::load_config().connected.is_empty() {
+        POPUP_H_EMPTY
+    } else {
+        POPUP_H_MAIN
+    };
     match tray_rect {
         Some((ix, iy, iw)) => {
             let scale = win.scale_factor().unwrap_or(1.0);
-            let h_px = win.outer_size().map(|s| s.height as f64).unwrap_or(420.0 * scale);
-            let (x, y) = popup_pos_above_tray(ix, iy, iw, 372.0, h_px, scale, 10.0);
+            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
+            let (x, y) = popup_pos_above_tray(ix, iy, iw, 372.0, logical_h * scale, scale, 10.0);
             // 隐藏状态下直接设坐标(不依赖显示器查询,positioner 对隐藏窗口会失败)
             let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
             let _ = win.show();
             let _ = win.set_focus();
         }
         None => {
+            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
             let _ = win.show();
             let _ = win.move_window(Position::TrayBottomRight);
             let _ = win.set_focus();
         }
     }
+    // 前台锁兜底:120ms 后再聚焦一次(show 时机下的 set_focus 可能被 Windows 拒绝)
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        if let Some(w) = handle.get_webview_window("popup") {
+            let _ = w.set_focus();
+        }
+    });
 }
 
 fn hide_popup(app: &AppHandle) {
@@ -326,6 +358,8 @@ fn open_settings(app: AppHandle) {
 
 fn open_settings_impl(app: &AppHandle) {
     logger::log(logger::Level::Info, "window", "open_settings");
+    // 先显式隐藏弹窗:避免"设置窗抢焦点 → popup blur → 隐藏"与按钮 invoke 的时序竞态
+    hide_popup(app);
     match app.get_webview_window("settings") {
         Some(win) => {
             let _ = win.unminimize();
@@ -377,8 +411,19 @@ fn quit_app(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::popup_pos_above_tray;
+    use super::{blur_hide_allowed, popup_pos_above_tray};
 
+    #[test]
+    fn blur_within_grace_keeps_popup() {
+        // 刚 show 完 120ms 内失焦:不隐藏(杂散 blur)
+        assert!(!blur_hide_allowed(120, 500));
+    }
+
+    #[test]
+    fn blur_after_grace_hides_popup() {
+        // show 后 2s 失焦:正常隐藏
+        assert!(blur_hide_allowed(2000, 500));
+    }
     #[test]
     fn popup_anchors_above_tray_icon() {
         // 1080p、100% 缩放:图标位于 (1830, 1052),宽 24;弹窗 372×420,间隙 10
@@ -506,10 +551,34 @@ pub fn run() {    tauri::Builder::default()
             Ok(())
         })
         .on_window_event(|window, event| {
-            // popup 失焦自动隐藏
+            // popup 失焦自动隐藏(带宽限期:刚 show 时的杂散 blur 不隐藏)
             if window.label() == "popup" {
-                if let tauri::WindowEvent::Focused(false) = event {
-                    let _ = window.hide();
+                match event {
+                    tauri::WindowEvent::Focused(true) => {
+                        logger::log(logger::Level::Info, "window", "popup focused");
+                    }
+                    tauri::WindowEvent::Focused(false) => {
+                        let elapsed = POPUP_SHOWN_AT
+                            .lock()
+                            .unwrap()
+                            .map(|t| t.elapsed().as_millis())
+                            .unwrap_or(u128::MAX);
+                        if blur_hide_allowed(elapsed, BLUR_HIDE_GRACE_MS) {
+                            logger::log(
+                                logger::Level::Info,
+                                "window",
+                                &format!("popup blurred after {elapsed}ms → hide"),
+                            );
+                            let _ = window.hide();
+                        } else {
+                            logger::log(
+                                logger::Level::Info,
+                                "window",
+                                &format!("popup blurred within grace ({elapsed}ms) → keep visible"),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
         })
