@@ -2,7 +2,7 @@
 import type { AppState, ConfigUpdatedPayload, ScanResult, UsageUpdatedPayload } from "./types";
 import { mock } from "./mock";
 
-export const isTauri = typeof window !== "undefined" && "_TAURI_INTERNALS_" in window;
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
