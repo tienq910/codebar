@@ -73,7 +73,8 @@ fn rect_to_physical(rect: &tauri::Rect, scale: f64) -> (f64, f64, f64) {
 
 /// 显示弹窗。tray_rect = Some((x, y, w)) 时精确锚定托盘图标上方;
 /// None(如第二实例唤起)时兜底走 positioner(需先 show 再定位)。
-/// 高度按已接入状态取固定值(空态/主界面),只在此时改窗口尺寸。
+/// 初始高度按已接入状态取(空态/主界面),显示后前端会实测内容高度
+/// 经 set_popup_height 精调;尺寸只在窗口可见时改动(WebView2 bounds 才可同步)。
 fn show_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
     refresh::mark_popup_opened(app); // 记录交互,驱动自适应刷新
@@ -86,19 +87,33 @@ fn show_popup(app: &AppHandle, tray_rect: Option<(f64, f64, f64)>) {
     match tray_rect {
         Some((ix, iy, iw)) => {
             let scale = win.scale_factor().unwrap_or(1.0);
-            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
             let (x, y) = popup_pos_above_tray(ix, iy, iw, 372.0, logical_h * scale, scale, 10.0);
-            // 隐藏状态下直接设坐标(不依赖显示器查询,positioner 对隐藏窗口会失败)
+            // 先定位再显示,避免在旧位置闪一帧
             let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
             let _ = win.show();
+            // 可见后再设尺寸:wry 只在窗口可见时可靠同步 WebView2 控制器 bounds;
+            // 尺寸变化后底边会动,再设一次位置保持锚定托盘上方
+            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
+            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
             let _ = win.set_focus();
         }
         None => {
-            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
             let _ = win.show();
+            let _ = win.set_size(tauri::LogicalSize::new(372.0, logical_h));
             let _ = win.move_window(Position::TrayBottomRight);
             let _ = win.set_focus();
         }
+    }
+    // 尺寸诊断:真机空档/裁切问题定位用
+    {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let inner = win.inner_size().map(|s| format!("{}x{}", s.width, s.height)).unwrap_or_default();
+        let outer = win.outer_size().map(|s| format!("{}x{}", s.width, s.height)).unwrap_or_default();
+        logger::log(
+            logger::Level::Info,
+            "window",
+            &format!("popup shown: logical_h={logical_h} scale={scale} inner={inner} outer={outer}"),
+        );
     }
     // 前台锁兜底:120ms 后再聚焦一次(show 时机下的 set_focus 可能被 Windows 拒绝)
     let handle = app.clone();
@@ -356,6 +371,31 @@ fn open_settings(app: AppHandle) {
     open_settings_impl(&app);
 }
 
+/// 前端实测内容高度 → 精调弹窗高度。
+/// 仅在窗口可见时应用(隐藏窗口布局未完成,量高不可靠;可见窗口 resize 安全),
+/// 底边锚定不动(贴住托盘上方)。
+#[tauri::command]
+fn set_popup_height(app: AppHandle, height: f64) {
+    let Some(win) = app.get_webview_window("popup") else { return };
+    if !win.is_visible().unwrap_or(false) {
+        return;
+    }
+    let h = height.clamp(212.0, 572.0);
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+        let _ = win.set_size(tauri::LogicalSize::new(372.0, h));
+        let _ = win.set_position(tauri::PhysicalPosition::new(
+            pos.x,
+            pos.y + size.height as i32 - (h * scale).round() as i32,
+        ));
+        logger::log(
+            logger::Level::Info,
+            "window",
+            &format!("popup height → {h} (measured {height:.0})"),
+        );
+    }
+}
+
 fn open_settings_impl(app: &AppHandle) {
     logger::log(logger::Level::Info, "window", "open_settings");
     // 先显式隐藏弹窗:避免"设置窗抢焦点 → popup blur → 隐藏"与按钮 invoke 的时序竞态
@@ -474,6 +514,7 @@ pub fn run() {    tauri::Builder::default()
             set_refresh_interval,
             set_autostart,
             open_settings,
+            set_popup_height,
             quit_app,
             debug_log,
             open_log_dir

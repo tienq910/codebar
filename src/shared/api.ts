@@ -52,6 +52,11 @@ export const api = {
     mock.openSettings();
     return Promise.resolve();
   },
+  /** 实测内容高度 → Rust 精调弹窗高度(仅窗口可见时生效) */
+  setPopupHeight(height: number): Promise<void> {
+    if (isTauri) return invoke<void>("set_popup_height", { height });
+    return Promise.resolve();
+  },
   quitApp(): Promise<void> {
     if (isTauri) return invoke<void>("quit_app");
     mock.quitApp();

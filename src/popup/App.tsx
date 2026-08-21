@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../shared/api";
+import { api, isTauri } from "../shared/api";
 import { fmtCountdown, fmtRelative, fmtUsd, worstWindow } from "../shared/format";
 import { applyTheme } from "../shared/theme";
 import type { AppState, ProviderSnapshot, UsageWindow } from "../shared/types";
@@ -36,6 +36,8 @@ export default function PopupApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<string>(ALL);
   const [tick, setTick] = useState(0);
+  const lastHeight = useRef(0);
+  const dimsLogged = useRef(false);
   // 底部动作去重(pointerdown 与 click 双通道都会触发)
   const actGuard = useRef<Record<string, number>>({});
   const footerAct = (key: string, fn: () => void) => () => {
@@ -79,9 +81,30 @@ export default function PopupApp() {
     api.refreshNow();
   }, []);
 
-  // 弹窗高度固定(空态 452 / 主界面 572,由 Rust 在 show 时设定),
-  // 禁止在隐藏窗口上 setSize/setPosition:WebView2 命中区会与可视内容错位,
-  // 导致底部按钮"看得见、点不动"(Win10 实体机实测)。内容超出由 .pp-body 内滚。
+  // 弹窗高度自适应内容:前端实测 scrollHeight → Rust 侧 set_popup_height 精调。
+  // 只在窗口可见时测量(隐藏窗口布局未完成,量高不可靠);高度不变不上报,
+  // 避免周期性扰动窗口。初始高度由 Rust show_popup 按空态/主界面预设。
+  useEffect(() => {
+    if (!isTauri || !state) return;
+    const measure = () => {
+      if (document.visibilityState !== "visible") return;
+      const el = document.querySelector(".popup");
+      if (!el) return;
+      const h = Math.min(572, Math.max(212, el.scrollHeight + 12));
+      if (!dimsLogged.current) {
+        dimsLogged.current = true;
+        api.debugLog(
+          `popup dims: innerHeight=${window.innerHeight} dpr=${window.devicePixelRatio} scrollHeight=${el.scrollHeight} → h=${h}`
+        );
+      }
+      if (h === lastHeight.current) return;
+      lastHeight.current = h;
+      api.setPopupHeight(h).catch((e) => api.debugLog(`ui:setPopupHeight FAILED: ${e}`));
+    };
+    measure();
+    document.addEventListener("visibilitychange", measure);
+    return () => document.removeEventListener("visibilitychange", measure);
+  }, [state, tab]);
 
   if (!state) {
     return (
