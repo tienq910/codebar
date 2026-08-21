@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, isTauri } from "../shared/api";
-import { fmtCountdown, fmtRelative, fmtUsd, worstWindow } from "../shared/format";
+import { fmtCountdown, fmtRelative, fmtUsd } from "../shared/format";
 import { applyTheme } from "../shared/theme";
 import type { AppState, ProviderSnapshot, UsageWindow } from "../shared/types";
 
@@ -221,7 +221,9 @@ function SummaryView({
   return (
     <>
       {snaps.map((p) => {
-        const w = worstWindow(p.windows);
+        // 汇总行固定显示主窗口(session/5h 窗,各 provider windows[0];
+        // deepseek 为余额窗)。最紧张窗口由托盘图标和 ≥90% 告警承担。
+        const w: UsageWindow | undefined = p.windows[0];
         const statusMsg =
           p.status.kind === "ok" ? null : p.status.kind === "stale" ? p.status.message : p.status.message;
         return (

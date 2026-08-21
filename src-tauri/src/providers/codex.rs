@@ -54,43 +54,53 @@ pub fn auth_json_path() -> PathBuf {
     codex_home().join("auth.json")
 }
 
+// 凭据文件字段全部 Option:真实 auth.json 里 OAuth 用户的 "OPENAI_API_KEY": null,
+// serde 的 String+default 只兜「字段缺失」兜不住 null,会导致整个文件解析失败。
 #[derive(Deserialize)]
 struct AuthFile {
+    #[serde(default, rename = "OPENAI_API_KEY")]
+    openai_api_key: Option<String>,
     #[serde(default)]
-    #[serde(rename = "OPENAI_API_KEY")]
-    openai_api_key: String,
+    tokens: Option<AuthTokens>,
     #[serde(default)]
-    tokens: AuthTokens,
-    #[serde(default)]
-    last_refresh: String,
+    last_refresh: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
 struct AuthTokens {
     #[serde(default, alias = "accessToken")]
-    access_token: String,
+    access_token: Option<String>,
     #[serde(default, alias = "refreshToken")]
-    refresh_token: String,
+    refresh_token: Option<String>,
     #[serde(default, alias = "accountId")]
-    account_id: String,
+    account_id: Option<String>,
+}
+
+/// 解析 auth.json 内容(纯函数,单测覆盖)
+pub fn parse_auth_json(text: &str) -> Option<CodexCredentials> {
+    let file: AuthFile = serde_json::from_str(text).ok()?;
+    let tokens = file.tokens.unwrap_or_default();
+    let token_from_oauth = tokens.access_token.unwrap_or_default();
+    Some(CodexCredentials {
+        // API key 模式:OPENAI_API_KEY 充当 access_token(无刷新)
+        access_token: if token_from_oauth.is_empty() {
+            file.openai_api_key.unwrap_or_default()
+        } else {
+            token_from_oauth
+        },
+        refresh_token: tokens.refresh_token.unwrap_or_default(),
+        account_id: tokens.account_id.unwrap_or_default(),
+        last_refresh: file
+            .last_refresh
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&Utc)),
+    })
 }
 
 pub fn load_credentials() -> Option<CodexCredentials> {
     let text = std::fs::read_to_string(auth_json_path()).ok()?;
-    let file: AuthFile = serde_json::from_str(&text).ok()?;
-    Some(CodexCredentials {
-        // API key 模式:OPENAI_API_KEY 充当 access_token(无刷新)
-        access_token: if file.tokens.access_token.is_empty() {
-            file.openai_api_key
-        } else {
-            file.tokens.access_token
-        },
-        refresh_token: file.tokens.refresh_token,
-        account_id: file.tokens.account_id,
-        last_refresh: DateTime::parse_from_rfc3339(&file.last_refresh)
-            .ok()
-            .map(|t| t.with_timezone(&Utc)),
-    })
+    parse_auth_json(&text)
 }
 
 async fn refresh_token_if_needed(creds: &mut CodexCredentials) -> Result<(), String> {
@@ -365,5 +375,43 @@ mod tests {
         assert!(!c.needs_refresh(now));
         c.last_refresh = Some(now - chrono::Duration::seconds(REFRESH_AFTER_SECS + 60));
         assert!(c.needs_refresh(now));
+    }
+
+    #[test]
+    fn auth_json_tolerates_null_api_key() {
+        // OAuth 用户的真实 auth.json:"OPENAI_API_KEY": null + 完整 tokens
+        let c = parse_auth_json(r#"{
+            "OPENAI_API_KEY": null,
+            "tokens": {"id_token":"id","access_token":"at","refresh_token":"rt","account_id":"acc"},
+            "last_refresh": "2026-08-20T10:00:00Z"
+        }"#)
+        .expect("null OPENAI_API_KEY 不应导致解析失败");
+        assert_eq!(c.access_token, "at");
+        assert_eq!(c.refresh_token, "rt");
+        assert_eq!(c.account_id, "acc");
+        assert!(c.last_refresh.is_some());
+    }
+
+    #[test]
+    fn auth_json_tolerates_null_tokens() {
+        // API key 用户:"tokens": null,OPENAI_API_KEY 有值
+        let c = parse_auth_json(r#"{"OPENAI_API_KEY":"sk-xxx","tokens":null,"last_refresh":null}"#)
+            .expect("null tokens 不应导致解析失败");
+        assert_eq!(c.access_token, "sk-xxx");
+        assert!(c.refresh_token.is_empty());
+        assert!(c.last_refresh.is_none());
+    }
+
+    #[test]
+    fn auth_json_tolerates_null_token_fields() {
+        // tokens 内字段为 null / 缺字段不炸,拿到什么算什么
+        let c = parse_auth_json(r#"{"tokens":{"access_token":"at","refresh_token":null}}"#)
+            .expect("tokens 内 null 字段不应导致解析失败");
+        assert_eq!(c.access_token, "at");
+        assert!(c.account_id.is_empty());
+        // 完全无 token → has_token()=false(扫描报"内容不可用"的正确情形)
+        let c2 = parse_auth_json(r#"{"OPENAI_API_KEY":null,"tokens":null}"#).unwrap();
+        assert!(!c2.has_token());
+        assert!(parse_auth_json("not json").is_none());
     }
 }

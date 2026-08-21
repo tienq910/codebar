@@ -31,20 +31,3 @@ export function fmtUsd(v: number | null): string | null {
   if (v == null) return null;
   return `$${v.toFixed(2)}`;
 }
-
-/** 汇总行「最紧张窗口」:与 Rust worst_window 一致 */
-export function worstWindow(windows: UsageWindowLike[]): UsageWindowLike | null {
-  const withPct = windows.filter((w) => w.usedPercent != null);
-  if (withPct.length > 0) {
-    return withPct.reduce((a, b) => ((b.usedPercent ?? 0) > (a.usedPercent ?? 0) ? b : a));
-  }
-  return windows[0] ?? null;
-}
-
-interface UsageWindowLike {
-  label: string;
-  usedPercent: number | null;
-  resetAt?: number | null;
-  pace?: { text: string; hot: boolean } | null;
-  note?: string | null;
-}
